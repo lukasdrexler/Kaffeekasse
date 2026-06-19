@@ -1,27 +1,22 @@
 #!/usr/bin/env python3
 """
-Kaffeekasse - Verwaltung einer Büro-Kaffeekasse.
 
-Datenmodell (alles transaktionsbasiert):
-- Es wird KEIN Saldo gespeichert, sondern nur Ereignisse (Transaktionen).
-  Der Saldo einer Person = Summe aller Transaktionsbeträge.
-- Drei Transaktionstypen:
-    "consumption" : Striche aus der Liste  -> negativ (Person schuldet Geld)
-    "payment"     : eingegangene Zahlung    -> positiv
-    "purchase"    : Kaffeekauf für die Kasse -> positiv (Gutschrift)
-- Geld wird intern IMMER in Cent (Integer) gerechnet, niemals als float.
-  So entstehen keine Rundungsfehler. Erst bei der Anzeige wird in Euro
-  umgerechnet.
-- Der Kaffeepreis ist veränderbar. Bei einer Strichlisten-Abrechnung wird
-  der zu diesem Zeitpunkt gültige Preis im Eintrag EINGEFROREN
-  (Feld "unit_price_cents"). Spätere Preisänderungen wirken nur in die
-  Zukunft.
-- Eine Strichlisten-Abrechnung erzeugt für jede beteiligte Person einen
-  Eintrag, alle mit derselben "batch_id" und demselben Datum. So lässt sich
-  eine Abrechnung als Ganzes wiedererkennen und rückgängig machen.
 
-Daten liegen in einer einzigen JSON-Datei neben dem Skript (kaffeekasse.json).
-Menschenlesbar, leicht zu sichern, im Notfall mit dem Editor reparierbar.
+Data model (transaction based):
+- Balance is NOT saved explicitly, only transactions.
+  A person's balance = sum of all their transactions.
+- Four types of transaction: 
+    "consumption" : Number of consumed cups * price  -> negative (person owes money)
+    "payment"     : payment received    -> positive (credit)
+    "purchase"    : purchase of coffee for the pool -> positive (credit)
+    "payout"      : reimbursement (e.g. for coffee purchase) -> negative
+- Price per cup is variable. Everytime a consumption is tracked, the current price
+  is being FROZEN ("unit_price_cents"). Later price adjustments only affect future
+  transactions.
+- Settling of a tally sheet creates an entry for each person involved, all with
+  the same "batch_id" and the same date.
+
+Data is stored in a single JSON file (kaffeekasse.json).
 """
 
 import json
@@ -37,11 +32,11 @@ from tkinter import ttk, messagebox, simpledialog
 
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          "kaffeekasse.json")
-DEFAULT_PRICE_CENTS = 40  # 0,40 € Startpreis, jederzeit in der GUI änderbar
+DEFAULT_PRICE_CENTS = 18  # can be changed in GUI
 
 
 # ---------------------------------------------------------------------------
-# Hilfsfunktionen für Geldbeträge (alles in Cent)
+# Helper functions
 # ---------------------------------------------------------------------------
 
 def cents_to_str(cents: int) -> str:
@@ -69,7 +64,7 @@ def today_str() -> str:
 # ---------------------------------------------------------------------------
 
 class Store:
-    """Kapselt das Laden/Speichern und alle Operationen auf den Daten."""
+    """Encapsulates loading/saving and all operations on the data."""
 
     def __init__(self, path: str):
         self.path = path
@@ -77,7 +72,7 @@ class Store:
             "price_per_coffee_cents": DEFAULT_PRICE_CENTS,
             "next_person_id": 1,
             "next_batch_id": 1,
-            "persons": {},  # id(str) -> {"name": str, "transactions": [...]}
+            "persons": {}, 
         }
         self.load()
 
@@ -87,14 +82,14 @@ class Store:
         if os.path.exists(self.path):
             with open(self.path, "r", encoding="utf-8") as f:
                 self.data = json.load(f)
-            # Sanfte Migration fehlender Felder
+            
             self.data.setdefault("price_per_coffee_cents", DEFAULT_PRICE_CENTS)
             self.data.setdefault("next_person_id", 1)
             self.data.setdefault("next_batch_id", 1)
             self.data.setdefault("persons", {})
 
     def save(self):
-        # Vor dem Überschreiben eine Sicherungskopie anlegen.
+        # safety before overwriting
         if os.path.exists(self.path):
             shutil.copy2(self.path, self.path + ".bak")
         tmp = self.path + ".tmp"
@@ -122,7 +117,7 @@ class Store:
         return pid
 
     def persons_sorted(self):
-        """Liste von (pid, person-dict), alphabetisch nach Name."""
+        """list of (pid, person-dict), sorted alphabetically."""
         return sorted(self.data["persons"].items(),
                       key=lambda kv: kv[1]["name"].lower())
 
@@ -147,9 +142,9 @@ class Store:
         self.save()
 
     def add_consumption_batch(self, counts: dict):
-        """counts: {pid: anzahl}. Legt eine Abrechnung mit gemeinsamer
-        batch_id an. Nur Personen mit count > 0 bekommen einen Eintrag.
-        Der aktuelle Preis wird je Eintrag eingefroren."""
+        """counts: {pid: anzahl}. Creates one biling with one
+        "batch_id". Only people with count>0 get an entry.
+        Current price is frozen."""
         batch_id = f"{today_str()}-{self.data['next_batch_id']}"
         self.data["next_batch_id"] += 1
         price = self.price_cents
@@ -169,9 +164,9 @@ class Store:
             self.save()
         return batch_id if any_entry else None
 
-    def add_payback(self, pid: str, amount_cents: int, note: str = ""):
+    def add_payout(self, pid: str, amount_cents: int, note: str = ""):
         self.data["persons"][pid]["transactions"].append({
-            "date": today_str(), "type": "payback",
+            "date": today_str(), "type": "payout",
             "amount_cents": -abs(amount_cents), "note": note,})
         self.save()
 # ---------------------------------------------------------------------------
@@ -182,8 +177,7 @@ class App(tk.Tk):
     def __init__(self, store: Store):
         super().__init__()
         self.store = store
-        self.title("Kaffeekasse")
-        #self.geometry("860x520")
+        self.title("Coffee Fund")
         self.minsize(720, 420)
         self.selected_pid = None
 
@@ -209,7 +203,7 @@ class App(tk.Tk):
         panes = ttk.Panedwindow(self, orient="horizontal")
         panes.pack(fill="both", expand=True, padx=10, pady=4)
 
-        # Links: Personenliste mit Saldo
+        # left: list of people with balances
         left = ttk.Frame(panes)
         cols = ("name", "saldo")
         self.tree = ttk.Treeview(left, columns=cols, show="headings",
@@ -227,19 +221,19 @@ class App(tk.Tk):
         self.tree.bind("<<TreeviewSelect>>", self.on_select_person)
         panes.add(left, weight=1)
 
-        # Rechts: History der gewählten Person
+        # right: history of selected person
         right = ttk.Frame(panes)
         self.detail_label = ttk.Label(
-            right, text="Keine Person ausgewählt",
+            right, text="No person selected",
             font=("TkDefaultFont", 11, "bold"))
         self.detail_label.pack(anchor="w", pady=(0, 4))
 
         hcols = ("date", "type", "detail", "amount")
         self.hist = ttk.Treeview(right, columns=hcols, show="headings")
-        for c, txt, w, anc in (("date", "Datum", 90, "w"),
-                               ("type", "Art", 90, "w"),
+        for c, txt, w, anc in (("date", "Date", 90, "w"),
+                               ("type", "Type", 90, "w"),
                                ("detail", "Details", 160, "w"),
-                               ("amount", "Betrag", 90, "e")):
+                               ("amount", "Amount", 90, "e")):
             self.hist.heading(c, text=txt)
             self.hist.column(c, width=w, anchor=anc)
         self.hist.pack(fill="both", expand=True, side="left")
@@ -250,20 +244,20 @@ class App(tk.Tk):
         # Aktionen für die gewählte Person
         actions = ttk.Frame(right, padding=(0, 6))
         actions.pack(fill="x", side="bottom")
-        ttk.Button(actions, text="+ Zahlung", command=self.on_add_payment
+        ttk.Button(actions, text="+ Payment", command=self.on_add_payment
                    ).pack(side="top", fill="x")
-        ttk.Button(actions, text="+ Kaffeekauf", command=self.on_add_purchase
+        ttk.Button(actions, text="+ Purchase", command=self.on_add_purchase
                    ).pack(side="top", fill="x",  pady=2)
-        ttk.Button(actions, text="+ Auszahlung", command=self.on_add_payback
+        ttk.Button(actions, text="+ Payout", command=self.on_add_payout
                    ).pack(side="top", fill="x", pady=2)
         panes.add(right, weight=2)
 
     def _build_bottom_bar(self):
         bar = ttk.Frame(self, padding=(10, 8))
         bar.pack(fill="x")
-        ttk.Button(bar, text="Strichliste eintragen …",
+        ttk.Button(bar, text="Enter Tally",
                    command=self.on_enter_tally).pack(side="left")
-        ttk.Button(bar, text="Person hinzufügen",
+        ttk.Button(bar, text="Add person",
                    command=self.on_add_person).pack(side="left", padx=8)
         self.total_label = ttk.Label(bar, text="")
         self.total_label.pack(side="right")
@@ -272,7 +266,7 @@ class App(tk.Tk):
 
     def _update_price_label(self):
         self.price_label.config(
-            text=f"Preis pro Kaffee: {cents_to_str(self.store.price_cents)}")
+            text=f"Price per cup: {cents_to_str(self.store.price_cents)}")
 
     def refresh_person_list(self):
         self.tree.delete(*self.tree.get_children())
@@ -280,19 +274,19 @@ class App(tk.Tk):
         for pid, person in self.store.persons_sorted():
             bal = self.store.balance_cents(pid)
             total += bal
-            tag = "negativ" if bal < 0 else ("positiv" if bal > 0 else "")
+            tag = "negative" if bal < 0 else ("positive" if bal > 0 else "")
             self.tree.insert("", "end", iid=pid,
                              values=(person["name"], cents_to_str(bal)),
                              tags=(tag,))
         self.total_label.config(
-            text=f"Kassenstand (Summe aller Salden): {cents_to_str(total)}")
+            text=f"Coffee fund balance (sum of all balances): {cents_to_str(total)}")
         # Auswahl/History erhalten, wenn möglich
         if self.selected_pid and self.selected_pid in self.store.data["persons"]:
             self.tree.selection_set(self.selected_pid)
             self.refresh_history()
         else:
             self.selected_pid = None
-            self.detail_label.config(text="Keine Person ausgewählt")
+            self.detail_label.config(text="No person selected")
             self.hist.delete(*self.hist.get_children())
 
     def refresh_history(self):
@@ -303,8 +297,8 @@ class App(tk.Tk):
         self.detail_label.config(
             text=f"History: {person['name']}   "
                  f"(Saldo {cents_to_str(self.store.balance_cents(self.selected_pid))})")
-        type_names = {"consumption": "Striche", "payment": "Zahlung",
-                      "purchase": "Kaffeekauf", "payback": "Auszahlung"}
+        type_names = {"consumption": "Ticks", "payment": "Payment",
+                      "purchase": "Purchase", "payout": "Payout"}
         # neueste zuerst
         for t in sorted(person["transactions"],
                         key=lambda x: x["date"], reverse=True):
@@ -326,25 +320,25 @@ class App(tk.Tk):
     def on_change_price(self):
         cur = self.store.price_cents
         ans = simpledialog.askstring(
-            "Preis ändern",
-            f"Neuer Preis pro Kaffee in € (aktuell {cents_to_str(cur)}).\n"
-            "Bereits eingetragene Striche behalten ihren alten Preis.",
+            "Change Price",
+            f"New price per cup in € (currently {cents_to_str(cur)}).\n"
+            "Transactions already entered will retain their price.",
             initialvalue=f"{cur // 100},{cur % 100:02d}", parent=self)
         if ans is None:
             return
         try:
             cents = euro_str_to_cents(ans)
             if cents <= 0:
-                raise ValueError("muss > 0 sein")
+                raise ValueError("has to be > 0")
         except ValueError:
-            messagebox.showerror("Ungültig", "Bitte einen gültigen "
-                                 "Betrag eingeben, z. B. 0,45", parent=self)
+            messagebox.showerror("Invalid", "Please enter a "
+                                 "a valid amount, e.g. 0,45", parent=self)
             return
         self.store.set_price(cents)
         self._update_price_label()
 
     def on_add_person(self):
-        name = simpledialog.askstring("Person hinzufügen",
+        name = simpledialog.askstring("Add Person",
                                       "Name:", parent=self)
         if name and name.strip():
             pid = self.store.add_person(name.strip())
@@ -353,8 +347,8 @@ class App(tk.Tk):
 
     def _require_selection(self) -> bool:
         if not self.selected_pid:
-            messagebox.showinfo("Hinweis",
-                                "Bitte links zuerst eine Person auswählen.",
+            messagebox.showinfo("Remark",
+                                "Please select a person from the list on the left first.",
                                 parent=self)
             return False
         return True
@@ -362,20 +356,20 @@ class App(tk.Tk):
     def on_add_payment(self):
         if not self._require_selection():
             return
-        self._amount_dialog("Zahlung erfassen", "Eingegangener Betrag in €:",
+        self._amount_dialog("Record Payment", "Amount received in €:",
                             self.store.add_payment)
 
     def on_add_purchase(self):
         if not self._require_selection():
             return
-        self._amount_dialog("Kaffeekauf erfassen",
-                            "Ausgegebener Betrag in € (Gutschrift):",
+        self._amount_dialog("Record Coffee Purchase",
+                            "Amount spent in €:",
                             self.store.add_purchase)
 
-    def on_add_payback(self):
+    def on_add_payout(self):
         if not self._require_selection():
             return
-        self._amount_dialog("Auszahlung erfassen", "Ausgezahlter Betrag in €:", self.store.add_payback)
+        self._amount_dialog("Record Payout", "Amount paid out in €:", self.store.add_payout)
 
     def _amount_dialog(self, title, prompt, store_method):
         dlg = AmountDialog(self, title, prompt)
@@ -388,16 +382,16 @@ class App(tk.Tk):
     def on_enter_tally(self):
         persons = self.store.persons_sorted()
         if not persons:
-            messagebox.showinfo("Hinweis", "Es sind noch keine Personen "
-                                "angelegt.", parent=self)
+            messagebox.showinfo("Remark", "No users have been created yet."
+                                , parent=self)
             return
         dlg = TallyDialog(self, persons, self.store.price_cents)
         if dlg.result is None:
             return
         batch = self.store.add_consumption_batch(dlg.result)
         if batch is None:
-            messagebox.showinfo("Nichts eingetragen",
-                                "Alle Felder waren 0.", parent=self)
+            messagebox.showinfo("Recorded nothing",
+                                "All fields were 0.", parent=self)
         self.refresh_person_list()
 
 
@@ -417,14 +411,14 @@ class AmountDialog(tk.Toplevel):
         self.amount_var = tk.StringVar()
         e = ttk.Entry(frm, textvariable=self.amount_var, width=14)
         e.grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 8))
-        ttk.Label(frm, text="Notiz (optional):").grid(row=2, column=0,
+        ttk.Label(frm, text="Note (optional):").grid(row=2, column=0,
                                                       columnspan=2, sticky="w")
         self.note_var = tk.StringVar()
         ttk.Entry(frm, textvariable=self.note_var, width=32).grid(
             row=3, column=0, columnspan=2, sticky="we", pady=(4, 10))
         ttk.Button(frm, text="OK", command=self._ok).grid(row=4, column=0,
                                                           sticky="e")
-        ttk.Button(frm, text="Abbrechen", command=self.destroy).grid(
+        ttk.Button(frm, text="Cancel", command=self.destroy).grid(
             row=4, column=1, sticky="w", padx=6)
         e.focus_set()
         self.bind("<Return>", lambda _e: self._ok())
@@ -438,8 +432,8 @@ class AmountDialog(tk.Toplevel):
             if cents <= 0:
                 raise ValueError
         except ValueError:
-            messagebox.showerror("Ungültig", "Bitte einen gültigen Betrag "
-                                 "eingeben, z. B. 5,00", parent=self)
+            messagebox.showerror("Invalied", "Please enter a valid "
+                                 "amount, e.g. 5,00", parent=self)
             return
         self.result = (cents, self.note_var.get().strip())
         self.destroy()
@@ -453,15 +447,15 @@ class TallyDialog(tk.Toplevel):
         super().__init__(parent)
         self.result = None
         self.persons = persons
-        self.title("Strichliste eintragen")
+        self.title("Enter Tally")
         self.transient(parent)
         self.geometry("380x460")
         self.entries = {}
 
         head = ttk.Frame(self, padding=(12, 10))
         head.pack(fill="x")
-        ttk.Label(head, text=f"Anzahl Kaffees pro Person "
-                  f"(Preis {cents_to_str(price_cents)}):",
+        ttk.Label(head, text=f"Number of cups per person"
+                  f"(price {cents_to_str(price_cents)}):",
                   wraplength=340).pack(anchor="w")
 
         # Scrollbarer Bereich für ~20+ Personen
@@ -491,8 +485,8 @@ class TallyDialog(tk.Toplevel):
 
         btns = ttk.Frame(self, padding=12)
         btns.pack(fill="x")
-        ttk.Button(btns, text="Eintragen", command=self._ok).pack(side="right")
-        ttk.Button(btns, text="Abbrechen", command=self.destroy
+        ttk.Button(btns, text="Enter", command=self._ok).pack(side="right")
+        ttk.Button(btns, text="Cancel", command=self.destroy
                    ).pack(side="right", padx=6)
         if first:
             first.focus_set()
@@ -512,9 +506,9 @@ class TallyDialog(tk.Toplevel):
                     raise ValueError
             except ValueError:
                 messagebox.showerror(
-                    "Ungültig",
-                    f"Ungültige Anzahl bei einer Person: '{txt}'. "
-                    "Bitte nur ganze Zahlen ≥ 0.", parent=self)
+                    "Invalid",
+                    f"Invalid amount for person: '{txt}'. "
+                    "Please only enter integers ≥ 0.", parent=self)
                 return
             counts[pid] = n
         self.result = counts
