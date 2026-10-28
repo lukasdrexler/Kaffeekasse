@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Kaffeekasse
+Comment=Verwaltung der Büro-Kaffeekasse
+Exec=python3 %h/kaffeekasse/kaffeekasse.py
+Path=%h/kaffeekasse
+Icon=%h/kaffeekasse/kaffeekasse.png
+Terminal=false
+Categories=Office;Utility;
