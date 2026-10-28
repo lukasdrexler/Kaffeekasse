@@ -191,11 +191,11 @@ class App(tk.Tk):
     def _build_top_bar(self):
         bar = ttk.Frame(self, padding=(10, 8))
         bar.pack(fill="x")
-        ttk.Label(bar, text="Kaffeekasse", font=("TkDefaultFont", 14, "bold")
+        ttk.Label(bar, text="Coffee Fund", font=("TkDefaultFont", 14, "bold")
                   ).pack(side="left")
         self.price_label = ttk.Label(bar, text="")
         self.price_label.pack(side="left", padx=20)
-        ttk.Button(bar, text="Preis ändern", command=self.on_change_price
+        ttk.Button(bar, text="Change Price", command=self.on_change_price
                    ).pack(side="left")
         self._update_price_label()
 
@@ -205,13 +205,13 @@ class App(tk.Tk):
 
         # left: list of people with balances
         left = ttk.Frame(panes)
-        cols = ("name", "saldo")
+        cols = ("name", "balance")
         self.tree = ttk.Treeview(left, columns=cols, show="headings",
                                  selectmode="browse")
         self.tree.heading("name", text="Person")
-        self.tree.heading("saldo", text="Saldo")
+        self.tree.heading("balance", text="Balance")
         self.tree.column("name", width=200, anchor="w")
-        self.tree.column("saldo", width=90, anchor="e")
+        self.tree.column("balance", width=90, anchor="e")
         self.tree.pack(fill="both", expand=True, side="left")
         sb = ttk.Scrollbar(left, orient="vertical", command=self.tree.yview)
         sb.pack(side="right", fill="y")
@@ -296,8 +296,8 @@ class App(tk.Tk):
         person = self.store.data["persons"][self.selected_pid]
         self.detail_label.config(
             text=f"History: {person['name']}   "
-                 f"(Saldo {cents_to_str(self.store.balance_cents(self.selected_pid))})")
-        type_names = {"consumption": "Ticks", "payment": "Payment",
+                 f"(Balance {cents_to_str(self.store.balance_cents(self.selected_pid))})")
+        type_names = {"consumption": "Tally", "payment": "Payment",
                       "purchase": "Purchase", "payout": "Payout"}
         # neueste zuerst
         for t in sorted(person["transactions"],
@@ -454,7 +454,7 @@ class TallyDialog(tk.Toplevel):
 
         head = ttk.Frame(self, padding=(12, 10))
         head.pack(fill="x")
-        ttk.Label(head, text=f"Number of cups per person"
+        ttk.Label(head, text=f"Number of cups per person "
                   f"(price {cents_to_str(price_cents)}):",
                   wraplength=340).pack(anchor="w")
 
